@@ -524,6 +524,70 @@ async function parseCMRFile(file) {
   return result;
 }
 
+// ─── GENERIC EXCEL PARSER ────────────────────────────────────────────────────
+// Formato: Fecha | Descripción | Monto | Categoría (opt) | Titular (opt) | Nota (opt)
+async function parseGenericExcel(file) {
+  const buffer = await file.arrayBuffer();
+  const wb = XLSX.read(buffer, { type: 'array', cellDates: true });
+  for (const sheetName of wb.SheetNames) {
+    const ws = wb.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
+    // Find header row: first row containing Fecha AND Monto
+    let headerRow = -1;
+    for (let i = 0; i < Math.min(rows.length, 10); i++) {
+      const r = (rows[i] || []).map(v => String(v || '').trim().toUpperCase());
+      if (r.some(c => c.includes('FECHA')) && r.some(c => c.includes('MONTO'))) {
+        headerRow = i; break;
+      }
+    }
+    if (headerRow < 0) continue;
+    const hdrs = (rows[headerRow] || []).map(v => String(v || '').trim().toUpperCase());
+    const ci = name => hdrs.findIndex(h => h.includes(name));
+    const iDate = ci('FECHA'), iDesc = ci('DESC'), iMonto = ci('MONTO');
+    const iCat = ci('CATEG'), iHolder = ci('TITULAR'), iNota = ci('NOTA');
+    if (iDate < 0 || iDesc < 0 || iMonto < 0)
+      throw new Error('El archivo necesita columnas Fecha, Descripción y Monto.');
+    const result = [];
+    for (let i = headerRow + 1; i < rows.length; i++) {
+      const row = rows[i];
+      const dateVal = row[iDate], rawDesc = row[iDesc], montoVal = row[iMonto];
+      if (!dateVal || !rawDesc || montoVal == null) continue;
+      // Resolve date: Date object, Excel serial, or DD/MM/YYYY string
+      let iso;
+      if (dateVal instanceof Date) {
+        iso = dateVal.toISOString().split('T')[0];
+      } else if (typeof dateVal === 'number') {
+        iso = new Date(Math.round((dateVal - 25569) * 86400 * 1000)).toISOString().split('T')[0];
+      } else {
+        const s = String(dateVal).trim();
+        if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) {
+          const [d, m, y] = s.split('/');
+          iso = `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
+        } else if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+          iso = s;
+        } else continue;
+      }
+      const desc   = String(rawDesc).trim();
+      const amount = typeof montoVal === 'number'
+        ? Math.round(montoVal)
+        : parseInt(String(montoVal).replace(/[^\d-]/g, '')) || 0;
+      if (amount === 0) continue;
+      const catRaw    = iCat >= 0    ? String(row[iCat]    || '').trim() : '';
+      const holderRaw = iHolder >= 0 ? String(row[iHolder] || '').trim() : '';
+      const category  = catRaw && CATS[catRaw] ? catRaw : classify(desc);
+      const cardHolder = holderRaw.toLowerCase().includes('adicional') ? 'Adicional'
+                       : holderRaw.toLowerCase().includes('titular')   ? 'Titular' : 'N/A';
+      const notes = iNota >= 0 ? String(row[iNota] || '').trim() || null : null;
+      result.push({ id: uid(), date: iso, rawDescription: desc, description: desc,
+        amount, totalAmount: Math.abs(amount), pendingCuotas: 0, category,
+        cardHolder, source: 'Otro', isExcluded: false,
+        monthKey: iso.slice(0, 7), notes });
+    }
+    if (result.length > 0) return result;
+  }
+  throw new Error('No se encontraron transacciones. Verifica que el archivo tenga las columnas Fecha, Descripción y Monto.');
+}
+
 // ─── EXPORT ───────────────────────────────────────────────────────────────────
 function exportMonthly(monthKey, transactions) {
   const txs = transactions.filter(t => t.monthKey === monthKey && !t.isExcluded);

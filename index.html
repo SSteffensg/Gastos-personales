@@ -280,6 +280,21 @@ function sbSync(transactions) {
   }, 800);
 }
 
+async function sbLoadCustomCats() {
+  if (!_sb) return null;
+  const { data, error } = await _sb.from('custom_categories').select('*');
+  if (error) { console.error('Load custom cats:', error); return null; }
+  return data || [];
+}
+
+async function sbSyncCustomCat(cat) {
+  if (!_sb) return;
+  try {
+    await _sb.from('custom_categories')
+      .upsert({ name: cat.name, emoji: cat.emoji, color: cat.color });
+  } catch(e) { console.error('Sync custom cat:', e); }
+}
+
 async function sbTestConnection(url, key) {
   try {
     const client = window.supabase?.createClient(url, key);
@@ -609,6 +624,17 @@ function reducer(state, action) {
         ? { ...t, adjustedAmount: null, originalAmount: null }
         : t)
     };
+    case 'LOAD_CUSTOM_CATS': {
+      // Merge remote custom categories into CATS and state (non-destructive)
+      const incoming = action.categories || [];
+      incoming.forEach(c => {
+        if (!CATS[c.name]) CATS[c.name] = { color: c.color, emoji: c.emoji };
+      });
+      const existing = state.customCategories || [];
+      const merged = [...existing];
+      incoming.forEach(c => { if (!merged.find(m => m.name === c.name)) merged.push(c); });
+      return { ...state, customCategories: merged };
+    }
     case 'LOAD_TRANSACTIONS': return { ...state, transactions: action.transactions,
         syncStatus: 'synced', sbConnected: true };
     case 'SET_SYNC_STATUS': return { ...state, syncStatus: action.status };
@@ -1453,13 +1479,19 @@ function SettingsTab({ state, dispatch }) {
     const cfg = { url: sbUrl.trim(), key: sbKey.trim() };
     setSbConfig(cfg);
     _sb = result.client;
-    // Push local data if Supabase is empty, else pull
-    const remote = await sbLoad();
-    if (remote && remote.length > 0) {
-      dispatch({ type: 'LOAD_TRANSACTIONS', transactions: remote });
+    // Load transactions: pull from Supabase if has data, else push local
+    const [remoteTx, remoteCats] = await Promise.all([sbLoad(), sbLoadCustomCats()]);
+    if (remoteTx && remoteTx.length > 0) {
+      dispatch({ type: 'LOAD_TRANSACTIONS', transactions: remoteTx });
     } else {
       await _sb.from('transactions').upsert(transactions.map(txToRow));
-      dispatch({ type: 'SET_SB_CONNECTED', connected: true });
+    }
+    // Load/push custom categories
+    const localCats = state.customCategories || [];
+    if (remoteCats && remoteCats.length > 0) {
+      dispatch({ type: 'LOAD_CUSTOM_CATS', categories: remoteCats });
+    } else if (localCats.length > 0) {
+      await Promise.all(localCats.map(c => sbSyncCustomCat(c)));
     }
     setSbLoading(false);
     dispatch({ type: 'SET_SB_CONNECTED', connected: true });
@@ -1733,11 +1765,18 @@ function App() {
     const cfg = getSbConfig();
     if (!cfg?.url) return;
     dispatch({ type: 'SET_SYNC_STATUS', status: 'syncing' });
-    sbLoad().then(data => {
-      if (data) dispatch({ type: 'LOAD_TRANSACTIONS', transactions: data });
-      else dispatch({ type: 'SET_SYNC_STATUS', status: 'error' });
+    Promise.all([sbLoad(), sbLoadCustomCats()]).then(([txData, catData]) => {
+      if (txData) dispatch({ type: 'LOAD_TRANSACTIONS', transactions: txData });
+      else        dispatch({ type: 'SET_SYNC_STATUS', status: 'error' });
+      if (catData?.length) dispatch({ type: 'LOAD_CUSTOM_CATS', categories: catData });
     });
   }, []);
+
+  // Sync custom categories to Supabase when they change
+  useEffect(() => {
+    if (!state.sbConnected || !state.customCategories?.length) return;
+    state.customCategories.forEach(cat => sbSyncCustomCat(cat));
+  }, [state.customCategories]);
 
   // Sync to Supabase on every transaction change (skip first render)
   useEffect(() => {

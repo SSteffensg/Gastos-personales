@@ -261,25 +261,45 @@ function initSb(url, key) {
 
 async function sbLoad() {
   if (!_sb) return null;
-  const { data, error } = await _sb.from('transactions').select('*');
-  if (error) { console.error('Supabase load:', error); return null; }
-  return data.map(rowToTx);
+  // Paginate to bypass Supabase's 1000-row default limit
+  let all = [], from = 0;
+  const PAGE = 500;
+  while (true) {
+    const { data, error } = await _sb.from('transactions')
+      .select('*').range(from, from + PAGE - 1);
+    if (error) { console.error('Supabase load:', error); return null; }
+    if (!data?.length) break;
+    all = all.concat(data);
+    if (data.length < PAGE) break;
+    from += PAGE;
+  }
+  return all.map(rowToTx);
 }
 
 let _syncTimer = null;
+async function upsertChunked(rows, chunkSize = 400) {
+  for (let i = 0; i < rows.length; i += chunkSize) {
+    const { error } = await _sb.from('transactions').upsert(rows.slice(i, i + chunkSize));
+    if (error) throw error;
+  }
+}
 function sbSync(transactions) {
   if (!_sb) return;
   clearTimeout(_syncTimer);
   _syncTimer = setTimeout(async () => {
     try {
-      if (transactions.length > 0) {
-        const { error } = await _sb.from('transactions').upsert(transactions.map(txToRow));
-        if (error) throw error;
+      if (transactions.length > 0) await upsertChunked(transactions.map(txToRow));
+      // Delete orphans (paginated fetch of remote IDs)
+      let remoteIds = [], from = 0;
+      while (true) {
+        const { data } = await _sb.from('transactions').select('id').range(from, from + 999);
+        if (!data?.length) break;
+        remoteIds = remoteIds.concat(data.map(r => r.id));
+        if (data.length < 1000) break;
+        from += 1000;
       }
-      // Delete orphans
-      const { data: remote } = await _sb.from('transactions').select('id');
       const localIds = new Set(transactions.map(t => t.id));
-      const toDelete = (remote || []).filter(r => !localIds.has(r.id)).map(r => r.id);
+      const toDelete = remoteIds.filter(id => !localIds.has(id));
       if (toDelete.length > 0) await _sb.from('transactions').delete().in('id', toDelete);
     } catch(e) { console.error('Supabase sync error:', e); }
   }, 800);
@@ -1489,7 +1509,7 @@ function SettingsTab({ state, dispatch }) {
     if (remoteTx && remoteTx.length > 0) {
       dispatch({ type: 'LOAD_TRANSACTIONS', transactions: remoteTx });
     } else {
-      await _sb.from('transactions').upsert(transactions.map(txToRow));
+      await upsertChunked(transactions.map(txToRow));
     }
     // Load/push custom categories
     const localCats = state.customCategories || [];
@@ -1621,9 +1641,19 @@ function SettingsTab({ state, dispatch }) {
                  '✓ Datos sincronizados en la nube'}
               </div>
             </div>
+            <div style={{ display:'flex', gap:8, flexDirection:'column', alignItems:'flex-end' }}>
+            <button className="btn btn-secondary btn-sm" onClick={async () => {
+              dispatch({ type:'SET_SYNC_STATUS', status:'syncing' });
+              try {
+                await upsertChunked(transactions.map(txToRow));
+                dispatch({ type:'SET_SYNC_STATUS', status:'synced' });
+                dispatch({ type:'SET_TAB', tab:'dashboard' });
+              } catch(e) { dispatch({ type:'SET_SYNC_STATUS', status:'error' }); }
+            }}>⬆ Re-sincronizar todo</button>
             <button className="btn btn-secondary btn-sm" onClick={disconnectSupabase}>
               Desconectar
             </button>
+          </div>
           </div>
         </div>
       )}

@@ -1285,13 +1285,16 @@ function ImportTab({ state, dispatch }) {
   const [parsing, setParsing] = useState(false);
   const [parseError, setParseError] = useState(null);
   const fileRef = useRef();
+  const fileRefGeneric = useRef();
 
-  async function handleFile(e) {
+  async function handleFile(e, parser = 'cmr') {
     const file = e.target.files?.[0];
     if (!file) return;
     setParsing(true); setParseError(null);
     try {
-      const txs = await parseCMRFile(file);
+      const txs = parser === 'generic'
+        ? await parseGenericExcel(file)
+        : await parseCMRFile(file);
       dispatch({ type: 'SET_PENDING', txs });
     } catch (err) {
       setParseError(err.message);
@@ -1326,7 +1329,25 @@ function ImportTab({ state, dispatch }) {
           </div>
         </div>
         <input ref={fileRef} type="file" accept=".xlsx,.xls"
-          style={{ display:'none' }} onChange={handleFile} />
+          style={{ display:'none' }} onChange={e => handleFile(e, 'cmr')} />
+        <input ref={fileRefGeneric} type="file" accept=".xlsx,.xls,.csv"
+          style={{ display:'none' }} onChange={e => handleFile(e, 'generic')} />
+
+        {/* Otros gastos — plantilla genérica */}
+        <div className="import-card" onClick={() => fileRefGeneric.current?.click()}>
+          <div className="import-header">
+            <div className="import-icon" style={{ background:'rgba(245,158,11,.15)' }}>📋</div>
+            <div>
+              <div style={{ fontWeight:600 }}>Otros gastos / Otras tarjetas</div>
+              <div style={{ fontSize:13, color:'var(--text2)', marginTop:2 }}>
+                Excel con plantilla propia (.xlsx)
+              </div>
+              <div style={{ fontSize:12, color:'var(--text3)', marginTop:2 }}>
+                Columnas: Fecha · Descripción · Monto · Categoría (opcional)
+              </div>
+            </div>
+          </div>
+        </div>
 
         {/* Líder BCI */}
         <div className="import-card">

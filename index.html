@@ -185,6 +185,80 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   .spinner { width: 20px; height: 20px; border: 2px solid var(--border);
     border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; }
+
+  /* ─── SIDEBAR (oculto en móvil por defecto) ─────────────────────────────── */
+  .sidebar { display: none; }
+
+  /* ─── DESKTOP ≥ 768px ───────────────────────────────────────────────────── */
+  @media (min-width: 768px) {
+    /* Root se convierte en fila horizontal */
+    #root { flex-direction: row; max-width: 100%; margin: 0; overflow: hidden; height: 100vh; }
+
+    /* ── Sidebar ── */
+    .sidebar {
+      display: flex; flex-direction: column;
+      width: 220px; min-width: 220px; flex-shrink: 0;
+      background: var(--surface); border-right: 1px solid var(--border);
+      height: 100vh; padding: 24px 12px 20px;
+    }
+    .sidebar-logo {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 16px; font-weight: 800; color: var(--text);
+      padding: 4px 12px; margin-bottom: 28px; letter-spacing: -.3px;
+    }
+    .sidebar-tab {
+      display: flex; align-items: center; gap: 10px;
+      padding: 9px 12px; border-radius: var(--radius-sm);
+      border: none; background: none; cursor: pointer;
+      color: var(--text2); font-size: 14px; font-weight: 500;
+      font-family: inherit; width: 100%; text-align: left;
+      transition: all .15s; -webkit-tap-highlight-color: transparent;
+    }
+    .sidebar-tab:hover { background: var(--surface2); color: var(--text); }
+    .sidebar-tab.active { background: rgba(59,130,246,.15); color: var(--accent); font-weight: 600; }
+    .sidebar-icon { font-size: 16px; width: 22px; text-align: center; flex-shrink: 0; }
+    .sidebar-spacer { flex: 1; }
+    .sidebar-footer {
+      border-top: 1px solid var(--border); padding-top: 14px; margin-top: 8px;
+      font-size: 12px; color: var(--text3); padding-left: 12px;
+    }
+    .sidebar-sync { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 13px; }
+
+    /* Ocultar tab bar móvil */
+    .tabbar { display: none !important; }
+
+    /* App ocupa el resto del espacio */
+    .app { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+
+    /* Área de scroll más amplia */
+    .scroll { padding: 28px 40px 28px; }
+
+    /* Tipografía más grande en desktop */
+    .month-label { font-size: 26px; }
+    .total-amount { font-size: 48px; }
+    .header-title { font-size: 26px; }
+
+    /* Grid 2 columnas para categorías */
+    .cat-list-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+      margin-bottom: 10px;
+    }
+    .cat-list-grid .cat-card { margin-bottom: 0; }
+
+    /* Grid 2 columnas para cards de importar */
+    .import-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+      margin-bottom: 10px;
+    }
+    .import-grid .import-card { margin-bottom: 0; }
+
+    /* Modales centrados y más anchos */
+    .overlay { align-items: center; }
+    .modal { border-radius: var(--radius); max-width: 720px; max-height: 80vh; }
+
+    /* Alert más ancho */
+    .alert { max-width: 600px; }
+  }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 </head>
@@ -1268,6 +1342,7 @@ function DashboardTab({ state, dispatch }) {
           <div style={{ fontSize:13 }}>Importa tu cartola desde la pestaña Importar</div>
         </div>
       )}
+      <div className="cat-list-grid">
       {summaries.map(({ cat, amt, prev }) => {
         const cfg = CATS[cat] || CATS['Otros'];
         const pct = prev > 0 ? ((amt - prev) / prev * 100) : null;
@@ -1300,6 +1375,7 @@ function DashboardTab({ state, dispatch }) {
           </div>
         );
       })}
+      </div>
 
       {/* Excluded */}
       {excluded.length > 0 && (
@@ -1377,6 +1453,7 @@ function ImportTab({ state, dispatch }) {
           <div className="alert alert-error">{parseError}</div>
         )}
 
+        <div className="import-grid">
         {/* CMR */}
         <div className="import-card" onClick={() => fileRef.current?.click()}>
           <div className="import-header">
@@ -1392,10 +1469,6 @@ function ImportTab({ state, dispatch }) {
             </div>
           </div>
         </div>
-        <input ref={fileRef} type="file" accept=".xlsx,.xls"
-          style={{ display:'none' }} onChange={e => handleFile(e, 'cmr')} />
-        <input ref={fileRefGeneric} type="file" accept=".xlsx,.xls,.csv"
-          style={{ display:'none' }} onChange={e => handleFile(e, 'generic')} />
 
         {/* Otros gastos — plantilla genérica */}
         <div className="import-card" onClick={() => fileRefGeneric.current?.click()}>
@@ -1446,6 +1519,11 @@ function ImportTab({ state, dispatch }) {
             </div>
           </div>
         </div>
+        </div>{/* /import-grid */}
+        <input ref={fileRef} type="file" accept=".xlsx,.xls"
+          style={{ display:'none' }} onChange={e => handleFile(e, 'cmr')} />
+        <input ref={fileRefGeneric} type="file" accept=".xlsx,.xls,.csv"
+          style={{ display:'none' }} onChange={e => handleFile(e, 'generic')} />
 
         {parsing && (
           <div className="loading"><div className="spinner"/><span>Procesando Excel…</span></div>
@@ -1869,6 +1947,39 @@ function SettingsTab({ state, dispatch }) {
   );
 }
 
+// ─── SIDEBAR (desktop) ───────────────────────────────────────────────────────
+function Sidebar({ tabs, activeTab, dispatch, syncDot }) {
+  return (
+    <div className="sidebar">
+      <div className="sidebar-logo">
+        <span>💰</span>
+        <span>Gastos</span>
+      </div>
+      {tabs.map(t => (
+        <button key={t.id}
+          className={'sidebar-tab ' + (activeTab === t.id ? 'active' : '')}
+          onClick={() => dispatch({ type:'SET_TAB', tab:t.id })}>
+          <span className="sidebar-icon">{t.icon}</span>
+          <span>{t.label}</span>
+        </button>
+      ))}
+      <div className="sidebar-spacer" />
+      <div className="sidebar-footer">
+        {syncDot && (
+          <div className="sidebar-sync">
+            <span style={{ color: syncDot.color, fontSize:15 }}>{syncDot.label}</span>
+            <span style={{ color:'var(--text2)' }}>
+              {syncDot.label === '⟳' ? 'Sincronizando…' :
+               syncDot.label === '⚠' ? 'Error de sync' : 'Sincronizado'}
+            </span>
+          </div>
+        )}
+        <div>Gastos Personal v1.0</div>
+      </div>
+    </div>
+  );
+}
+
 // ─── APP ROOT ─────────────────────────────────────────────────────────────────
 function App() {
   const [state, dispatch] = useReducer(reducer, null, initState);
@@ -1933,8 +2044,10 @@ function App() {
   ];
 
   return (
+    <>
+    <Sidebar tabs={tabs} activeTab={state.activeTab} dispatch={dispatch} syncDot={syncDot} />
     <div className="app">
-      {/* Sync indicator */}
+      {/* Sync indicator (solo móvil, en desktop aparece en sidebar) */}
       {syncDot && (
         <div style={{ position:'fixed', top:10, right:14, zIndex:400,
           fontSize:18, color: syncDot.color, lineHeight:1 }}
@@ -1984,6 +2097,7 @@ function App() {
         <ManualModal dispatch={dispatch} />
       )}
     </div>
+    </>
   );
 }
 
